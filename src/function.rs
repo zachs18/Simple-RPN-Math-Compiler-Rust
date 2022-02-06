@@ -1,4 +1,6 @@
-mod errors;
+mod errors {
+    include!{concat!(env!("OUT_DIR"), "/function_errors.rs")}
+}
 
 use crate::commands::*;
 use crate::raw_code::{function_header_code, function_footer_code};
@@ -221,7 +223,7 @@ impl Function {
                 0
             )
         };
-        if code_binary.is_null() {
+        if code_binary.is_null() || code_binary == libc::MAP_FAILED {
             return Err("mmap failed");
         }
 
@@ -348,6 +350,8 @@ mod tests {
             ADD.clone(),
         ]).unwrap();
 
+//        dbg!(&f);
+
         let f_ptr = unsafe { f.as_fn_ptr_3() };
         assert_eq!(f_ptr(3, 4, 5), FunctionResultRaw{value: 12, error: 0});
 
@@ -396,14 +400,20 @@ mod tests {
         assert_eq!(f_ptr(3, 4), FunctionResultRaw{value: 81, error: 0});
         assert_eq!(f_ptr(3, 5), FunctionResultRaw{value: 243, error: 0});
         assert_eq!(f_ptr(4, 4), FunctionResultRaw{value: 256, error: 0});
+        #[cfg(target_pointer_width = "64")]
         assert_eq!(f_ptr(5, 200), FunctionResultRaw{value: -7817535966050405663, error: 0});
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(f_ptr(5, 200), FunctionResultRaw{value: 1018802913, error: 0});
 
         #[cfg(feature = "fn_traits")]
         {
             assert_eq!(f(3, 4), Ok(81));
             assert_eq!(f(3, 5), Ok(243));
             assert_eq!(f(4, 4), Ok(256));
+            #[cfg(target_pointer_width = "64")]
             assert_eq!(f(5, 200), Ok(-7817535966050405663));
+            #[cfg(target_pointer_width = "32")]
+            assert_eq!(f(5, 200), Ok(1018802913));
         }
 
         drop(f);

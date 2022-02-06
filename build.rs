@@ -1,21 +1,31 @@
 use std::io::{BufReader, BufRead, BufWriter, Write};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::var_os("CARGO_CFG_TARGET_ARCH") != Some("x86_64".into()) {
-        Err("This library currently only supports x86_64 linux.")?;
+    let mut temp = std::fs::File::create("/tmp/aaa.txt")?;
+    for (var, val) in std::env::vars_os() {
+        writeln!(temp, "{:?}: {:?}", var, val)?;
     }
-    if std::env::var_os("CARGO_CFG_TARGET_OS") != Some("linux".into()) {
-        Err("This library currently only supports x86_64 linux.")?;
-    }
+    drop(temp);
+
+    let target = std::env::var_os("TARGET").ok_or("Invalid target")?;
+    let mut code_segments_path = std::path::Path::new("src")
+        .join("code_segments");
+    code_segments_path.push(target);
+    code_segments_path.set_extension("S");
+
+    let out_dir = std::env::var_os("OUT_DIR").ok_or("OUT_DIR not set")?;
+    let out_dir = std::path::Path::new(&out_dir);
 
     let function_errors_file = BufReader::new(
         std::fs::File::open("function_errors.csv")?
     );
+    let function_errors_asm_path = out_dir.join("function_errors.S");
     let mut function_errors_asm = BufWriter::new(
-        std::fs::File::create("src/function_errors.S")?
+        std::fs::File::create(&function_errors_asm_path)?
     );
+    let function_errors_rs_path = out_dir.join("function_errors.rs");
     let mut function_errors_rs = BufWriter::new(
-        std::fs::File::create("src/function/errors.rs")?
+        std::fs::File::create(&function_errors_rs_path)?
     );
     let mut function_error_from_raw = Vec::with_capacity(4096);
     let mut function_error_impl_display = Vec::with_capacity(4096);
@@ -69,7 +79,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     function_errors_rs.flush()?;
 
     cc::Build::new()
-        .file("src/code_segments.S")
+        .include(out_dir)
+        .file(code_segments_path)
         .compile("code_segments");
     Ok(())
 }
