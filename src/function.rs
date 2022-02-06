@@ -1,7 +1,27 @@
+mod errors;
+
 use crate::commands::*;
 use crate::raw_code::{function_header_code, function_footer_code};
-use libc::{c_void, c_long, mmap, munmap, mprotect};
+use libc::{c_void, intptr_t, mmap, munmap, mprotect};
 use std::convert::TryInto;
+
+pub use errors::{FunctionError, FunctionErrorRaw, function_error_from_raw};
+
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct FunctionResultRaw {
+    value: isize,
+    error: FunctionErrorRaw,
+}
+
+pub type FunctionResult = std::result::Result<isize, FunctionError>;
+
+pub fn function_result_from_raw(raw: FunctionResultRaw) -> FunctionResult {
+    match function_error_from_raw(raw.error) {
+        None => Ok(raw.value),
+        Some(err) => Err(err),
+    }
+}
 
 #[derive(Debug)]
 pub struct Function {
@@ -230,26 +250,26 @@ impl Function {
 macro_rules! impl_unsafe_as_fn_ptr {
     ($name:ident, $args:tt) => {
         #[deny(unsafe_op_in_unsafe_fn)]
-        pub unsafe fn $name(&self) -> extern "C" fn $args -> c_long {
+        pub unsafe fn $name(&self) -> extern "C" fn $args -> FunctionResultRaw {
             unsafe { std::mem::transmute(self.code) }
         }
     }
 }
 impl Function {
     impl_unsafe_as_fn_ptr!(as_fn_ptr_0, ());
-    impl_unsafe_as_fn_ptr!(as_fn_ptr_1, (c_long));
-    impl_unsafe_as_fn_ptr!(as_fn_ptr_2, (c_long, c_long));
-    impl_unsafe_as_fn_ptr!(as_fn_ptr_3, (c_long, c_long, c_long));
-    impl_unsafe_as_fn_ptr!(as_fn_ptr_4, (c_long, c_long, c_long, c_long));
-    impl_unsafe_as_fn_ptr!(as_fn_ptr_5, (c_long, c_long, c_long, c_long, c_long));
-    impl_unsafe_as_fn_ptr!(as_fn_ptr_6, (c_long, c_long, c_long, c_long, c_long, c_long));
+    impl_unsafe_as_fn_ptr!(as_fn_ptr_1, (intptr_t));
+    impl_unsafe_as_fn_ptr!(as_fn_ptr_2, (intptr_t, intptr_t));
+    impl_unsafe_as_fn_ptr!(as_fn_ptr_3, (intptr_t, intptr_t, intptr_t));
+    impl_unsafe_as_fn_ptr!(as_fn_ptr_4, (intptr_t, intptr_t, intptr_t, intptr_t));
+    impl_unsafe_as_fn_ptr!(as_fn_ptr_5, (intptr_t, intptr_t, intptr_t, intptr_t, intptr_t));
+    impl_unsafe_as_fn_ptr!(as_fn_ptr_6, (intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t));
 }
 
 macro_rules! impl_fn_traits {
     ($Args:ty, $as_fn_ptr:ident, $args:ident, ( $($args_expanded:tt)* ) ) => {
         #[cfg(feature = "fn_traits")]
         impl std::ops::FnOnce<$Args> for Function {
-            type Output = c_long;
+            type Output = Result<isize, FunctionError>;
             extern "rust-call" fn call_once(self, args: $Args) -> Self::Output {
                 self.call(args)
             }
@@ -266,7 +286,7 @@ macro_rules! impl_fn_traits {
         impl std::ops::Fn<$Args> for Function {
             extern "rust-call" fn call(&self, $args: $Args) -> Self::Output {
                 let fn_ptr = unsafe { self.$as_fn_ptr() };
-                fn_ptr($($args_expanded)*)
+                function_result_from_raw((fn_ptr($($args_expanded)*)))
             }
         }
     }
@@ -279,37 +299,37 @@ impl_fn_traits!(
     ()
 );
 impl_fn_traits!(
-    (c_long, ),
+    (intptr_t, ),
     as_fn_ptr_1,
     args,
     (args.0)
 );
 impl_fn_traits!(
-    (c_long, c_long, ),
+    (intptr_t, intptr_t, ),
     as_fn_ptr_2,
     args,
     (args.0, args.1)
 );
 impl_fn_traits!(
-    (c_long, c_long, c_long, ),
+    (intptr_t, intptr_t, intptr_t, ),
     as_fn_ptr_3,
     args,
     (args.0, args.1, args.2)
 );
 impl_fn_traits!(
-    (c_long, c_long, c_long, c_long, ),
+    (intptr_t, intptr_t, intptr_t, intptr_t, ),
     as_fn_ptr_4,
     args,
     (args.0, args.1, args.2, args.3)
 );
 impl_fn_traits!(
-    (c_long, c_long, c_long, c_long, c_long, ),
+    (intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, ),
     as_fn_ptr_5,
     args,
     (args.0, args.1, args.2, args.3, args.4)
 );
 impl_fn_traits!(
-    (c_long, c_long, c_long, c_long, c_long, c_long, ),
+    (intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, ),
     as_fn_ptr_6,
     args,
     (args.0, args.1, args.2, args.3, args.4, args.5)
@@ -329,11 +349,11 @@ mod tests {
         ]).unwrap();
 
         let f_ptr = unsafe { f.as_fn_ptr_3() };
-        assert_eq!(f_ptr(3, 4, 5), 12);
+        assert_eq!(f_ptr(3, 4, 5), FunctionResultRaw{value: 12, error: 0});
 
         #[cfg(feature = "fn_traits")]
         {
-            assert_eq!(f(3, 4, 5), 12);
+            assert_eq!(f(3, 4, 5), Ok(12));
         }
 
         drop(f);
@@ -357,11 +377,11 @@ mod tests {
         ]).unwrap();
 
         let f_ptr = unsafe { f.as_fn_ptr_2() };
-        assert_eq!(f_ptr(3, 4), 81);
+        assert_eq!(f_ptr(3, 4), FunctionResultRaw{value: 81, error: 0});
 
         #[cfg(feature = "fn_traits")]
         {
-            assert_eq!(f(3, 4), 81);
+            assert_eq!(f(3, 4), Ok(81));
         }
 
         drop(f);
@@ -373,19 +393,68 @@ mod tests {
         let f = Function::parse("1 b { a p-1 * s-1 1 - } p-1").unwrap();
 
         let f_ptr = unsafe { f.as_fn_ptr_2() };
-        assert_eq!(f_ptr(3, 4), 81);
-        assert_eq!(f_ptr(3, 5), 243);
-        assert_eq!(f_ptr(4, 4), 256);
-        assert_eq!(f_ptr(5, 200), -7817535966050405663);
+        assert_eq!(f_ptr(3, 4), FunctionResultRaw{value: 81, error: 0});
+        assert_eq!(f_ptr(3, 5), FunctionResultRaw{value: 243, error: 0});
+        assert_eq!(f_ptr(4, 4), FunctionResultRaw{value: 256, error: 0});
+        assert_eq!(f_ptr(5, 200), FunctionResultRaw{value: -7817535966050405663, error: 0});
 
         #[cfg(feature = "fn_traits")]
         {
-            assert_eq!(f(3, 4), 81);
-            assert_eq!(f(3, 5), 243);
-            assert_eq!(f(4, 4), 256);
-            assert_eq!(f(5, 200), -7817535966050405663);
+            assert_eq!(f(3, 4), Ok(81));
+            assert_eq!(f(3, 5), Ok(243));
+            assert_eq!(f(4, 4), Ok(256));
+            assert_eq!(f(5, 200), Ok(-7817535966050405663));
         }
 
         drop(f);
+    }
+
+    #[test]
+    fn divide_and_mod_by_zero() {
+        use super::*;
+        let f = Function::parse("a 0 /").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_1() };
+        assert_eq!(f_ptr(3).error, FunctionError::DivideByZero as isize);
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(3).unwrap_err(), FunctionError::DivideByZero);
+        }
+    }
+
+    #[test]
+    fn min_divide_and_mod_by_negative_one() {
+        use super::*;
+        let f = Function::parse("a b /").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(intptr_t::MIN, -1).error, FunctionError::DivideMinByNegativeOne as isize);
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(intptr_t::MIN, -1), Err(FunctionError::DivideMinByNegativeOne));
+        }
+
+        let f = Function::parse("a b %").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(intptr_t::MIN, -1).error, FunctionError::DivideMinByNegativeOne as isize);
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(intptr_t::MIN, -1), Err(FunctionError::DivideMinByNegativeOne));
+        }
+    }
+
+    #[test]
+    fn err_display_divide_by_zero() {
+        use super::*;
+        let f = Function::parse("a b /").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        let _result: Result<isize, Box<dyn std::error::Error>> = (|| Ok(function_result_from_raw(f_ptr(intptr_t::MIN, -1))?))();
+
+        #[cfg(feature = "fn_traits")]
+        {
+            let _result: Result<isize, Box<dyn std::error::Error>> = (|| Ok(f(intptr_t::MIN, -1)?))();
+        }
     }
 }

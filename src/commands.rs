@@ -32,10 +32,10 @@ make_no_value_static!(PUSH_F, push_f_code, 0, 1, 0);
 make_no_value_static!(ADD, add_code, 2, 1, 2);
 make_no_value_static!(SUBTRACT, subtract_code, 2, 1, 2);
 make_no_value_static!(MULTIPLY, multiply_code, 2, 1, 2);
-make_no_value_static!(DIVIDE, divide_code, 2, 1, 2);
-make_no_value_static!(MOD, mod_code, 2, 1, 2);
-make_no_value_static!(UDIVIDE, udivide_code, 2, 1, 2);
-make_no_value_static!(UMOD, umod_code, 2, 1, 2);
+make_no_value_static!(DIVIDE, signed_divide_code, 2, 1, 2);
+make_no_value_static!(MOD, signed_mod_code, 2, 1, 2);
+make_no_value_static!(UDIVIDE, unsigned_divide_code, 2, 1, 2);
+make_no_value_static!(UMOD, unsigned_mod_code, 2, 1, 2);
 
 #[allow(non_snake_case)]
 pub(crate) fn PUSH_VALUE(value: isize) -> Command {

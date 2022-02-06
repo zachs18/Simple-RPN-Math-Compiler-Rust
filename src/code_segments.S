@@ -1,3 +1,5 @@
+#include "function_errors.S"
+
     .text
 
     .global function_header_code_start
@@ -19,11 +21,20 @@ function_header_code_end:
     .global function_footer_code_end
 function_footer_code_start:
     pop %rax
+    xor %edx,%edx
 
     mov %rbp,%rsp
     pop %rbp
     ret
 function_footer_code_end:
+
+    .global function_abort_code_start
+    .global function_abort_code_end
+function_abort_code_start:
+    mov %rbp,%rsp
+    pop %rbp
+    ret
+function_abort_code_end:
 
 
     .global while_loop_header_code_start
@@ -92,12 +103,66 @@ add_code_start:
     add %rax,(%rsp)
 add_code_end:
 
+    .global signed_add_checked_code_start
+    .global signed_add_checked_code_end
+signed_add_checked_code_start:
+    pop %rax
+    add %rax,(%rsp)
+# handle signed overflow
+    jno 0f
+    mov $SignedAdditionOverflow,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+signed_add_checked_code_end:
+
+    .global unsigned_add_checked_code_start
+    .global unsigned_add_checked_code_end
+unsigned_add_checked_code_start:
+    pop %rax
+    add %rax,(%rsp)
+# handle unsigned overflow
+    jnc 0f
+    mov $UnsignedAdditionOverflow,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+unsigned_add_checked_code_end:
+
+
     .global subtract_code_start
     .global subtract_code_end
 subtract_code_start:
     pop %rax
     sub %rax,(%rsp)
 subtract_code_end:
+
+    .global signed_subtract_checked_code_start
+    .global signed_subtract_checked_code_end
+signed_subtract_checked_code_start:
+    pop %rax
+    sub %rax,(%rsp)
+# handle signed overflow
+    jnc 0f
+    mov $SignedSubtractionOverflow,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+signed_subtract_checked_code_end:
+
+    .global unsigned_subtract_checked_code_start
+    .global unsigned_subtract_checked_code_end
+unsigned_subtract_checked_code_start:
+    pop %rax
+    sub %rax,(%rsp)
+# handle unsigned overflow
+    jnc 0f
+    mov $UnsignedSubtractionOverflow,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+unsigned_subtract_checked_code_end:
+
 
     .global multiply_code_start
     .global multiply_code_end
@@ -107,51 +172,123 @@ multiply_code_start:
     mov %rax,(%rsp)
 multiply_code_end:
 
-    .global divide_code_start
-    .global divide_code_end
-divide_code_start:
-# TODO: handle divide by 0, possibly by returning early with an indicative value in rdx
+    .global signed_multiply_checked_code_start
+    .global signed_multiply_checked_code_end
+signed_multiply_checked_code_start:
+    pop %rax
+    imulq (%rsp)
+# handle signed overflow
+    jno 0f
+    mov $SignedMultiplicationOverflow,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+    mov %rax,(%rsp)
+signed_multiply_checked_code_end:
+
+    .global unsigned_multiply_checked_code_start
+    .global unsigned_multiply_checked_code_end
+unsigned_multiply_checked_code_start:
+    pop %rax
+    mulq (%rsp)
+# handle unsigned overflow
+    jno 0f
+    mov $UnsignedMultiplicationOverflow,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+    mov %rax,(%rsp)
+unsigned_multiply_checked_code_end:
+
+    .global signed_divide_code_start
+    .global signed_divide_code_end
+signed_divide_code_start:
     pop %rcx
+# handle divide by zero
+    test %rcx,%rcx
+    jnz 0f
+    mov $DivideByZero,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+# handle MIN divide by -1
+    cmp $-1,%rcx
+    jne 0f
+    movabs $-0x8000000000000000,%rax
+    cmp (%rsp),%rax
+    jne 0f
+    mov $DivideMinByNegativeOne,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
     mov (%rsp),%rax
     cqo
     idiv %rcx
     mov %rax,(%rsp)
-divide_code_end:
+signed_divide_code_end:
 
-    .global mod_code_start
-    .global mod_code_end
-mod_code_start:
-# TODO: handle mod by 0, possibly by returning early with an indicative value in rdx
+    .global signed_mod_code_start
+    .global signed_mod_code_end
+signed_mod_code_start:
     pop %rcx
+# handle mod by zero
+    test %rcx,%rcx
+    jnz 0f
+    mov $DivideByZero,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
+# handle MIN mod by -1
+    cmp $-1,%rcx
+    jne 0f
+    movabs $-0x8000000000000000,%rax
+    cmp (%rsp),%rax
+    jne 0f
+    mov $DivideMinByNegativeOne,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
     mov (%rsp),%rax
     cqo
     idiv %rcx
     mov %rdx,(%rsp)
-mod_code_end:
+signed_mod_code_end:
 
 # TODO: divmod?
 
-    .global udivide_code_start
-    .global udivide_code_end
-udivide_code_start:
-# TODO: handle udivide by 0, possibly by returning early with an indicative value in rdx
+    .global unsigned_divide_code_start
+    .global unsigned_divide_code_end
+unsigned_divide_code_start:
     pop %rcx
+# handle divide by zero
+    test %rcx,%rcx
+    jnz 0f
+    mov $DivideByZero,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
     mov (%rsp),%rax
     cqo
     div %rcx
     mov %rax,(%rsp)
-udivide_code_end:
+unsigned_divide_code_end:
 
-    .global umod_code_start
-    .global umod_code_end
-umod_code_start:
-# TODO: handle umod by 0, possibly by returning early with an indicative value in rdx
+    .global unsigned_mod_code_start
+    .global unsigned_mod_code_end
+unsigned_mod_code_start:
     pop %rcx
+# handle divide by zero
+    test %rcx,%rcx
+    jnz 0f
+    mov $DivideByZero,%edx
+    movabs $function_abort_code_start,%rax
+    jmp *%rax
+0:
     mov (%rsp),%rax
     cqo
     div %rcx
     mov %rdx,(%rsp)
-umod_code_end:
+unsigned_mod_code_end:
 
 # TODO: udivmod?
 

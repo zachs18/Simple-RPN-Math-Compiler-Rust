@@ -32,10 +32,10 @@ make_no_value_code!(push_f_code, push_f_code_start, push_f_code_end);
 make_no_value_code!(add_code, add_code_start, add_code_end);
 make_no_value_code!(subtract_code, subtract_code_start, subtract_code_end);
 make_no_value_code!(multiply_code, multiply_code_start, multiply_code_end);
-make_no_value_code!(divide_code, divide_code_start, divide_code_end);
-make_no_value_code!(mod_code, mod_code_start, mod_code_end);
-make_no_value_code!(udivide_code, udivide_code_start, udivide_code_end);
-make_no_value_code!(umod_code, umod_code_start, umod_code_end);
+make_no_value_code!(signed_divide_code, signed_divide_code_start, signed_divide_code_end);
+make_no_value_code!(signed_mod_code, signed_mod_code_start, signed_mod_code_end);
+make_no_value_code!(unsigned_divide_code, unsigned_divide_code_start, unsigned_divide_code_end);
+make_no_value_code!(unsigned_mod_code, unsigned_mod_code_start, unsigned_mod_code_end);
 
 macro_rules! make_value_code {
     ($name:ident, $start:ident, $value_end:ident, $end:ident, $value_size:expr) => {
