@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap};
 
 pub mod arch;
+pub(crate) use arch::RelocationKind;
 
 mod symbol;
 pub(crate) use symbol::Symbol;

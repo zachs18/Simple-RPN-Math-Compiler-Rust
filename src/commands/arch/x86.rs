@@ -1,5 +1,4 @@
-use crate::raw_code::*;
-use std::borrow::Cow;
+use crate::{raw_code::*, code::{Relocatable, Symbol, RelocationKind, Relocation}, function::FunctionCreateError};
 use crate::commands::Command;
 
 #[allow(non_snake_case)]
@@ -12,7 +11,8 @@ pub(crate) fn PUSH_VALUE(value: isize) -> Command {
         param_count: 0,
         return_count: 1,
         required_stack_depth: 0,
-        code: Cow::Owned(code),
+        code: Relocatable::from(code),
+        data: Relocatable::default(),
     }
 }
 
@@ -35,7 +35,8 @@ pub(crate) fn PUSH_STACK_INDEX(stack_index: i32) -> Command {
         param_count: 0,
         return_count: 1,
         required_stack_depth,
-        code: Cow::Owned(code),
+        code: Relocatable::from(code),
+        data: Relocatable::default(),
     }
 }
 
@@ -58,10 +59,80 @@ pub(crate) fn POP_STACK_INDEX(stack_index: i32) -> Command {
         param_count: 1,
         return_count: 0,
         required_stack_depth,
-        code: Cow::Owned(code),
+        code: Relocatable::from(code),
+        data: Relocatable::default(),
     }
 }
 
+fn new_while_loop_header_footer() -> (Relocatable, Relocatable) {
+    let header_branch_symbol = Symbol::new_local();
+    let footer_branch_symbol = Symbol::new_local();
+
+    let (header_code, header_offset_loc) = while_loop_header_code();
+
+    let header_code = Relocatable {
+        data: header_code.into(),
+        symbols: vec![(header_branch_symbol.clone(), header_code.len())],
+        abs_symbols: vec![],
+        relocations: vec![Relocation::new(header_offset_loc.start, RelocationKind::Pc32, footer_branch_symbol.clone(), -4)],
+    };
+
+
+    let (footer_code, footer_offset_loc) = while_loop_footer_code();
+
+    let footer_code = Relocatable {
+        data: footer_code.into(),
+        symbols: vec![(footer_branch_symbol.clone(), footer_code.len())],
+        abs_symbols: vec![],
+        relocations: vec![Relocation::new(footer_offset_loc.start, RelocationKind::Pc32, header_branch_symbol.clone(), -4)],
+    };
+
+    (header_code, footer_code)
+}
+
+#[allow(non_snake_case)]
+pub(crate) fn WHILE_LOOP(commands: Vec<Command>) -> Result<Command, FunctionCreateError> {
+    let (mut code, footer_code) = new_while_loop_header_footer();
+    let mut data = Relocatable::default();
+    let mut required_stack_depth: usize = 1;
+    let mut stack_difference: isize = 0;
+    for command in commands {
+        let Command {
+            param_count: command_params,
+            return_count: command_returns,
+            required_stack_depth: command_required_depth,
+            code: command_code,
+            data: command_data,
+        } = command;
+        // TODO: handle overflows
+        if ((required_stack_depth as isize + stack_difference) as usize) < command_params {
+            required_stack_depth = (command_params as isize - stack_difference) as usize;
+        }
+        if ((required_stack_depth as isize + stack_difference) as usize) < command_required_depth {
+            required_stack_depth = (command_required_depth as isize - stack_difference) as usize;
+        }
+
+        stack_difference -= command_params as isize;
+        stack_difference += command_returns as isize;
+
+        code += command_code;
+        data += command_data;
+    }
+    code += footer_code;
+
+    if stack_difference != 0 {
+        return Err(FunctionCreateError::LoopChangedStackDepth);
+    }
+    
+    Ok(Command {
+        param_count: 0,
+        return_count: 0,
+        required_stack_depth,
+        code,
+        data, 
+    })
+}
+/* 
 #[allow(non_snake_case)]
 pub(crate) fn WHILE_LOOP(commands: Vec<Command>) -> Result<Command, &'static str> {
     let mut body_code = Vec::new();
@@ -120,3 +191,4 @@ pub(crate) fn WHILE_LOOP(commands: Vec<Command>) -> Result<Command, &'static str
         code: Cow::Owned(header_code),
     })
 }
+*/

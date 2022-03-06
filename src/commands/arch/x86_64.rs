@@ -1,4 +1,4 @@
-use crate::{raw_code::*, code::{Relocatable, Symbol, arch::RelocationKind, Relocation}, function::FunctionCreateError};
+use crate::{raw_code::*, code::{Relocatable, Symbol, RelocationKind, Relocation}, function::FunctionCreateError};
 use crate::commands::Command;
 
 #[allow(non_snake_case)]

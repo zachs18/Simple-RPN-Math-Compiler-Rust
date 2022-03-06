@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 macro_rules! make_value_code {
     ($name:ident, $start:ident, $value_end:ident, $end:ident, $value_size:expr) => {
         pub(crate) fn $name() -> (&'static [u8], std::ops::Range<usize>) {

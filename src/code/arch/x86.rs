@@ -4,11 +4,8 @@ use crate::code::AssembleError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RelocationKind {
     None = 0,
-    Direct64 = 1,
+    Direct32 = 1,
     Pc32 = 2,
-
-    Direct32 = 10,
-    Direct32S = 11,
 }
 
 impl RelocationKind {
@@ -30,7 +27,7 @@ impl RelocationKind {
                 *reloc_slice = i32::to_ne_bytes(actual_value);
                 Ok(())
             },
-            Direct64 | Direct32 | Direct32S => Err(AssembleError::InvalidRelocation("Cannot apply direct relocation for relative symbol")),
+            Direct32 => Err(AssembleError::InvalidRelocation("Cannot apply Direct32 relocation for relative symbol")),
         }
     }
     pub(crate) fn apply_absolute(self, data: &mut [u8], location: usize, value: isize) -> Result<(), AssembleError> {
