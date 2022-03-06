@@ -1,4 +1,5 @@
 use crate::raw_code::*;
+use crate::code::*;
 use std::borrow::Cow;
 
 #[derive(Debug, Clone)]
@@ -6,7 +7,8 @@ pub(crate) struct Command {
     pub(crate) param_count: usize,
     pub(crate) return_count: usize,
     pub(crate) required_stack_depth: usize,
-    pub(crate) code: Cow<'static, [u8]>,
+    pub(crate) code: Relocatable,
+    pub(crate) data: Relocatable,
 }
 
 macro_rules! make_no_value_static {
@@ -16,7 +18,8 @@ macro_rules! make_no_value_static {
                 param_count: $params,
                 return_count: $returns,
                 required_stack_depth: $required_depth,
-                code: Cow::Borrowed($code()),
+                code: Cow::Borrowed($code()).into(),
+                data: Cow::Borrowed(&[][..]).into(),
             };
         }
     }
@@ -69,8 +72,9 @@ mod tests {
 
         println!("{:?}", super::WHILE_LOOP(vec![]));
 
-        if let Ok(super::Command{ code, .. }) = super::WHILE_LOOP(vec![]) {
-            for byte in &*code {
+        if let Ok(command) = super::WHILE_LOOP(vec![]) {
+            let code_and_data = command.code + command.data;
+            for byte in code_and_data.assemble().unwrap() {
                 print!("{:02x} ", byte);
             }
             println!();

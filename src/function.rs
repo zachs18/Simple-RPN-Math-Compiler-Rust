@@ -2,6 +2,7 @@ mod errors {
     include!{concat!(env!("OUT_DIR"), "/function_errors.rs")}
 }
 
+use crate::code::{Relocatable, AssembleError};
 use crate::commands::*;
 use crate::raw_code::{function_header_code, function_footer_code};
 use libc::{c_void, intptr_t, mmap, munmap, mprotect};
@@ -41,21 +42,40 @@ impl std::ops::Drop for Function {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum FunctionCreateError {
+    UnrecognizedCommand,
+    InvalidInteger,
+    IntegerTooLarge,
+    IntegerOutOfRange,
+    StackUnderflow(&'static str),
+    UnterminatedLoop,
+    LoopChangedStackDepth,
+    AssembleError(AssembleError),
+    AllocationError(&'static str),
+}
+
+impl From<AssembleError> for FunctionCreateError {
+    fn from(e: AssembleError) -> Self {
+        FunctionCreateError::AssembleError(e)
+    }
+}
+
 impl Function {
-    pub fn parse(mut s: &str) -> Result<Function, &'static str> {
+    pub fn parse(mut s: &str) -> Result<Function, FunctionCreateError> {
         let (_param_count, commands) = Function::parse_helper(&mut s)?;
         s = s.trim_start();
         if s.len() != 0 {
-            return Err("Unrecognized command");
+            return Err(FunctionCreateError::UnrecognizedCommand);
         }
         // TODO: return param_count?
         Function::new(commands)
     }
-    fn parse_uint(s: &mut &str) -> Result<usize, &'static str> {
+    fn parse_uint(s: &mut &str) -> Result<usize, FunctionCreateError> {
         let mut value: usize;
         static DIGITS: &[char] = &['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
         *s = match s.strip_prefix(DIGITS) {
-            None => return Err("Not an integer"),
+            None => return Err(FunctionCreateError::InvalidInteger),
             Some(rest) => {
                 value = s.chars().next().unwrap().to_digit(10).unwrap() as usize;
                 rest
@@ -65,30 +85,30 @@ impl Function {
             let digit = s.chars().next().unwrap().to_digit(10).unwrap() as usize;
             value = value
                 .checked_mul(10)
-                .ok_or("Integer literal too large")?
+                .ok_or(FunctionCreateError::IntegerTooLarge)?
                 .checked_add(digit)
-                .ok_or("Integer literal too large")?;
+                .ok_or(FunctionCreateError::IntegerTooLarge)?;
             *s = rest;
         }
         Ok(value)
     }
-    fn parse_iint(s: &mut &str) -> Result<isize, &'static str> {
+    fn parse_iint(s: &mut &str) -> Result<isize, FunctionCreateError> {
         let negative: bool = match s.strip_prefix('-') {
             None => false,
             Some(rest) => { *s = rest; true }
         };
         let magnitude: usize = Function::parse_uint(s)?;
         if !negative {
-            magnitude.try_into().map_err(|_| "Integer literal out of range")
+            magnitude.try_into().map_err(|_| FunctionCreateError::IntegerOutOfRange)
         } else if magnitude <= isize::MAX as usize {
             Ok(-(magnitude as isize))
         } else if magnitude == isize::MIN as usize {
             Ok(magnitude as isize)
         } else {
-            Err("Integer literal out of range")
+            Err(FunctionCreateError::IntegerOutOfRange)
         }
     }
-    fn parse_helper(s: &mut &str) -> Result<(usize, Vec<Command>), &'static str> {
+    fn parse_helper(s: &mut &str) -> Result<(usize, Vec<Command>), FunctionCreateError> {
         let mut param_count = 0;
         let mut commands: Vec<Command> = vec![];
         while {*s = s.trim_start(); s.len() > 0} {
@@ -158,7 +178,7 @@ impl Function {
                         let value: isize =
                             Function::parse_uint(s)?
                             .try_into()
-                            .map_err(|_| "Integer literal too large")?;
+                            .map_err(|_| FunctionCreateError::IntegerTooLarge)?;
                         commands.push(PUSH_VALUE(value));
                     },
                     'l'|'p' => {
@@ -166,7 +186,7 @@ impl Function {
                         let index: i32 = 
                             Function::parse_iint(s)?
                             .try_into()
-                            .map_err(|_| "Stack index out of range")?;
+                            .map_err(|_| FunctionCreateError::StackUnderflow("Stack index out of range"))?;
                         commands.push(PUSH_STACK_INDEX(index));
                     },
                     's' => {
@@ -174,44 +194,49 @@ impl Function {
                         let index: i32 = 
                             Function::parse_iint(s)?
                             .try_into()
-                            .map_err(|_| "Stack index out of range")?;
+                            .map_err(|_| FunctionCreateError::StackUnderflow("Stack index out of range"))?;
                         commands.push(POP_STACK_INDEX(index));
                     },
                     '{' => {
                         *s = s.split_at(1).1;
                         let (loop_param_count, loop_commands) = Function::parse_helper(s)?;
-                        *s = s.strip_prefix('}').ok_or("Loop ended without '}'")?;
+                        *s = s.strip_prefix('}').ok_or(FunctionCreateError::UnterminatedLoop)?;
                         param_count = param_count.max(loop_param_count);
                         commands.push(WHILE_LOOP(loop_commands)?);
                     },
                     '}' => break, // Caller should check that the &str is empty
-                    _ => return Err("Unrecognized command"),
+                    _ => return Err(FunctionCreateError::UnrecognizedCommand),
                 },
             };
         }
         Ok((param_count, commands))
     }
 
-    pub(crate) fn new(commands: Vec<Command>) -> Result<Function, &'static str> {
+    pub(crate) fn new(commands: Vec<Command>) -> Result<Function, FunctionCreateError> {
         let mut stack_size: usize = 0;
-        let mut code = function_header_code().to_owned();
+        let mut code = Relocatable::from(function_header_code());
+        let mut data = Relocatable::default();
 
         for command in commands {
             if stack_size < command.param_count {
-                return Err("Function would pop value from empty stack");
+                return Err(FunctionCreateError::StackUnderflow("Function would pop value from empty stack"));
             }
             if stack_size < command.required_stack_depth {
-                return Err("Function would use value from past end of stack");
+                return Err(FunctionCreateError::StackUnderflow("Function would use value from past end of stack"));
             }
             stack_size -= command.param_count;
             stack_size += command.return_count;
-            code.extend_from_slice(&*command.code);
+            code += command.code;
+            data += command.data;
         }
         if stack_size == 0 {
-            return Err("Function would return from empty stack");
+            return Err(FunctionCreateError::StackUnderflow("Function would return from empty stack"));
         }
 
-        code.extend_from_slice(function_footer_code());
+        code += Relocatable::from(function_footer_code());
+
+        let code_and_data = code + data;
+        let code = code_and_data.assemble()?;
 
         let code_binary: *mut c_void = unsafe {
             mmap(
@@ -224,7 +249,7 @@ impl Function {
             )
         };
         if code_binary.is_null() || code_binary == libc::MAP_FAILED {
-            return Err("mmap failed");
+            return Err(FunctionCreateError::AllocationError("mmap failed"));
         }
 
         unsafe {
@@ -240,7 +265,7 @@ impl Function {
             if result != 0 {
                 todo!("handle munmap() failure");
             }
-            return Err("mprotect failed");
+            return Err(FunctionCreateError::AllocationError("mprotect failed"));
         }
         Ok(Function {
             code: code_binary,

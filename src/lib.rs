@@ -5,6 +5,7 @@
 
 pub(crate) mod raw_code;
 pub(crate) mod commands;
+pub(crate) mod code;
 pub mod function;
 
 
