@@ -62,6 +62,10 @@ impl std::ops::AddAssign for Relocatable {
         let lhs_len = self.data.len();
         self.data.to_mut().extend_from_slice(&rhs.data);
 
+        self.abs_symbols.extend(rhs.abs_symbols.into_iter().map(
+            |(sym, val)| (sym, val)
+        ));
+
         self.symbols.extend(rhs.symbols.into_iter().map(
             |(sym, loc)| (sym, loc + lhs_len)
         ));

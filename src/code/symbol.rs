@@ -2,6 +2,7 @@ use std::sync::atomic::AtomicUsize;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum SymbolInner {
+    Abort,
     Local(usize),
     Global(String),
 }
@@ -21,12 +22,16 @@ impl Symbol {
         let idx = LOCAL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Symbol { inner: SymbolInner::Local(idx) }
     }
+    pub fn abort() -> Self {
+        Symbol { inner: SymbolInner::Abort }
+    }
 }
 
 impl std::fmt::Debug for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SymbolInner::*;
         match &self.inner {
+            Abort => write!(f, "\".Labort\""),
             Local(idx) => write!(f, "\".L{}\"", idx),
             Global(sym) => write!(f, "{:?}", sym),
         }
@@ -37,6 +42,7 @@ impl std::fmt::Display for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SymbolInner::*;
         match &self.inner {
+            Abort => write!(f, ".Labort"),
             Local(idx) => write!(f, ".L{}", idx),
             Global(sym) => write!(f, "{}", sym),
         }

@@ -2,9 +2,9 @@ mod errors {
     include!{concat!(env!("OUT_DIR"), "/function_errors.rs")}
 }
 
-use crate::code::{Relocatable, AssembleError};
+use crate::code::{Relocatable, AssembleError, Symbol};
 use crate::commands::*;
-use crate::raw_code::{function_header_code, function_footer_code};
+use crate::raw_code::{function_header_code, function_footer_code, function_abort_code};
 use libc::{c_void, intptr_t, mmap, munmap, mprotect};
 use std::convert::TryInto;
 
@@ -222,6 +222,7 @@ impl Function {
                 return Err(FunctionCreateError::StackUnderflow("Function would pop value from empty stack"));
             }
             if stack_size < command.required_stack_depth {
+                dbg!(command);
                 return Err(FunctionCreateError::StackUnderflow("Function would use value from past end of stack"));
             }
             stack_size -= command.param_count;
@@ -234,6 +235,12 @@ impl Function {
         }
 
         code += Relocatable::from(function_footer_code());
+        code += Relocatable {
+            data: function_abort_code().into(),
+            symbols: vec![(Symbol::abort(), 0)],
+            abs_symbols: vec![],
+            relocations: vec![],
+        };
 
         let code_and_data = code + data;
         let code = code_and_data.assemble()?;
@@ -378,6 +385,7 @@ mod tests {
 //        dbg!(&f);
 
         let f_ptr = unsafe { f.as_fn_ptr_3() };
+        assert_eq!(f_ptr(1, 2, 3), FunctionResultRaw{value: 6, error: 0});
         assert_eq!(f_ptr(3, 4, 5), FunctionResultRaw{value: 12, error: 0});
 
         #[cfg(feature = "fn_traits")]
@@ -387,7 +395,56 @@ mod tests {
 
         drop(f);
     }
+    #[test]
+    fn mul() {
+        use super::*;
+        let f = Function::new(vec![
+            PUSH_A.clone(),
+            PUSH_B.clone(),
+            MULTIPLY.clone(),
+        ]).unwrap();
 
+//        dbg!(&f);
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(2, 3), FunctionResultRaw{value: 6, error: 0});
+        assert_eq!(f_ptr(3, 4), FunctionResultRaw{value: 12, error: 0});
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(f_ptr(333333, 555555), FunctionResultRaw{value: 501221087, error: 0});
+
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(3, 4, 5), Ok(12));
+        }
+
+        drop(f);
+    }
+    #[test]
+    fn infinite_loop() {
+        use super::*;
+        let f = Function::new(vec![
+            PUSH_A.clone(),
+            WHILE_LOOP(vec![
+                PUSH_B.clone(),
+                ADD.clone(),
+            ]).unwrap(),
+        ]).unwrap();
+
+//        dbg!(&f);
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(5, -1), FunctionResultRaw{value: 0, error: 0});
+        assert_eq!(f_ptr(200, -10), FunctionResultRaw{value: 0, error: 0});
+        assert_eq!(f_ptr(16, -1), FunctionResultRaw{value: 0, error: 0});
+
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(3, 4, 5), Ok(12));
+        }
+
+        drop(f);
+    }
+// #[cfg(any())]
     #[test]
     fn pow() {
         use super::*;
@@ -397,12 +454,15 @@ mod tests {
             WHILE_LOOP(vec![
                 PUSH_A.clone(),
                 PUSH_STACK_INDEX(-1),
+                // PUSH_STACK_INDEX(2),
                 MULTIPLY.clone(),
                 POP_STACK_INDEX(-1),
+                // POP_STACK_INDEX(1),
                 PUSH_VALUE(1),
                 SUBTRACT.clone(),
             ]).unwrap(),
             PUSH_STACK_INDEX(-1),
+            // PUSH_STACK_INDEX(1),
         ]).unwrap();
 
         let f_ptr = unsafe { f.as_fn_ptr_2() };
@@ -454,6 +514,91 @@ mod tests {
         #[cfg(feature = "fn_traits")]
         {
             assert_eq!(f(3).unwrap_err(), FunctionError::DivideByZero);
+        }
+    }
+
+    #[test]
+    fn divide_positive_positive() {
+        use super::*;
+        let f = Function::parse("a b /").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(301, 13), FunctionResultRaw{ value: 23, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(301, 13).unwrap_err(), Ok(23));
+        }
+        let f = Function::parse("a b %").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(301, 13), FunctionResultRaw{ value: 2, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(301, 13).unwrap_err(), Ok(2));
+        }
+    }
+
+    #[test]
+    fn divide_positive_negative() {
+        use super::*;
+        let f = Function::parse("a b /").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(301, -13), FunctionResultRaw{ value: -23, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(301, -13).unwrap_err(), Ok(-23));
+        }
+        let f = Function::parse("a b %").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(301, -13), FunctionResultRaw{ value: 2, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(301, -13).unwrap_err(), Ok(2));
+        }
+    }
+
+    #[test]
+    fn divide_negative_positive() {
+        use super::*;
+        let f = Function::parse("a b /").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(-301, 13), FunctionResultRaw{ value: -23, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(-301, 13).unwrap_err(), Ok(-23));
+        }
+        let f = Function::parse("a b %").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(-301, 13), FunctionResultRaw{ value: -2, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(-301, 13).unwrap_err(), Ok(-2));
+        }
+    }
+
+    #[test]
+    fn divide_negative_negative() {
+        use super::*;
+        let f = Function::parse("a b /").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(-301, -13), FunctionResultRaw{ value: 23, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(-301, -13).unwrap_err(), Ok(23));
+        }
+
+        let f = Function::parse("a b %").unwrap();
+
+        let f_ptr = unsafe { f.as_fn_ptr_2() };
+        assert_eq!(f_ptr(-301, -13), FunctionResultRaw{ value: -2, error: 0 });
+        #[cfg(feature = "fn_traits")]
+        {
+            assert_eq!(f(-301, -13).unwrap_err(), Ok(-2));
         }
     }
 
