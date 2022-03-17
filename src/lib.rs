@@ -8,6 +8,7 @@ pub(crate) mod commands;
 pub(crate) mod code;
 pub mod function;
 pub mod ast;
+pub mod compiler;
 
 
 #[cfg(test)]
