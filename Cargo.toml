@@ -11,7 +11,10 @@ cc = "^1.0"
 [dependencies]
 lazy_static = "^1"
 libc = "^0.2"
+nom = { version = "7.1", optional = true }
 
 [features]
 fn_traits = []
 ignore_target = []
+parsing = ["nom"]
+default = ["parsing"]

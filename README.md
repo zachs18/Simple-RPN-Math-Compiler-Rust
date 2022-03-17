@@ -1,39 +1,57 @@
-# Simple RPN Math Compiler
+# Simple Math Compiler
 
-Takes a sequence of commands and gives a `Function` object from which can give a function pointer taking zero to six `isize`s and returning `isize`.
-
-
-### Commands:
-
-* `a`: Push the first function argument to the stack
-* `b`: Push the second function argument to the stack
-* `c`: Push the third function argument to the stack
-* `d`: Push the fourth function argument to the stack
-* `e`: Push the fifth function argument to the stack
-* `f`: Push the sixth function argument to the stack
-* `<positive decimal integer>`: Push value to stack
-* `p<positive decimal integer>`: Push to the stack a copy of the Nth value from the top of the stack (0-indexed from the top)
-* `s<positive decimal integer>`: Pop a value from the stack and set the Nth value from the top of the stack (0-indexed from the top, after the pop) to that value
-* `+`: Pop two values, push their sum
-* `*`: Pop two values, push their product
-* `-`: Pop two values, push their difference (`a b -` gives a-b)
-* `/`: Pop two values, push their quotient (`a b /` gives a/b)
-* `%`: Pop two values, push their remainder (`a b %` gives a%b)
+Compiles a simple language.
 
 
-### Loops:
+### Syntax:
 
-A loop starts with `{` and ends with `}`. Any commands (including other loops) may be inside a loop. The stack must have the same depth at the end of the loop. When execution reaches a loop, if the top value on the stack is zero, the loop will be skipped, otherwise the loop will begin. When an iteration of the loop finishes, if the value on the top of the stack is not zero, the loop will execute again, otherwise it will exit. Because loops read (but do not pop) the top value on the stack, the stack must have at least one element prior to a loop.
+```
+program         : item*
+item            : function_item | static_item
+variable        : `mut`? ident
+function_item   : `fn` ident `(` (variable),* `)` block
+block            : `{` statement* `}`
+statement       : let_stmt | expr_stmt | loop_stmt | return_stmt
+let_stmt        : `let` variable `=` expr `;`
+expr_stmt       : expr `;`
+loop_stmt       : `while` expr block
+return_stmt     : `return` expr `;`
+static_item     : `static` `atomic`? ident `=` expr `;`
+
+expr            : assign_expr
+assign_expr     : or_expr (assign_op assign_expr)*
+or_expr         : and_expr (or_op or_expr)*
+and_expr        : compare_expr (and_op and_expr)*
+compare_expr    : add_expr (compare_op compare_expr)*
+add_expr        : mul_expr (add_op add_expr)*
+mul_expr        : call_expr (mul_op mul_expr)*
+call_expr       : atom_expr | call_expr `(` (expr),* `)`
+atom_expr       : `(` expr `)` | block | ident | literal
+
+assign_op       : `=`
+compare_op      : `>` | `>=` | `<` | `<=` | `==` | `!=`
+add_op          : `+` `?`? | `-` `?`?
+mul_op          : `*` `?`? | `/` `?`? | `%` `?`?
+```
+
 
 ### Examples:
 
 #### Exponentiation:
 
-`a 1 b { p2 p2 * s1 1 - } p1`
+```  
+fn exp(a, mut b) {
+	let mut result = 1;
+	while b > 0 {
+		result = result *? a;
+	}
+	return result;
+}
+```
 
 Input: `4`, `3`
 
-Output: `64`
+Output: `Ok(64)`
 
 Execution:
 

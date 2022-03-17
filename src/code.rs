@@ -18,7 +18,7 @@ impl Relocation {
     pub(crate) fn new(location: usize, kind: arch::RelocationKind, symbol: Symbol, addend: isize) -> Self { Self { location, kind, symbol, addend } }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Relocatable {
     pub(crate) data: Cow<'static, [u8]>,
     /// Vector of symbol definitions in this section of data
@@ -41,13 +41,24 @@ macro_rules! impl_from_data_for_relocatable {
                 }
             }
         }
-
     }
 }
 
 impl_from_data_for_relocatable!(&'static [u8]);
 impl_from_data_for_relocatable!(Cow<'static, [u8]>);
 impl_from_data_for_relocatable!(Vec<u8>);
+
+
+impl<const N: usize> From<[u8; N]> for Relocatable {
+    fn from(data: [u8; N]) -> Self {
+        Self {
+            data: Vec::from(Box::new(data) as Box<[u8]>).into(),
+            symbols: vec![],
+            abs_symbols: vec![],
+            relocations: vec![],
+        }
+    }
+}
 
 impl std::ops::Add for Relocatable {
     type Output = Self;
