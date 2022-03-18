@@ -29,6 +29,33 @@ pub struct Relocatable {
     pub(crate) relocations: Vec<Relocation>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Object {
+    pub code: Relocatable,
+    pub data: Relocatable,
+}
+
+impl From<Relocatable> for Object {
+    fn from(code: Relocatable) -> Self {
+        Self { code, data: Relocatable::default() }
+    }
+}
+
+impl std::ops::Add for Object {
+    type Output = Self;
+    fn add(mut self, rhs: Self) -> Self {
+        self += rhs;
+        self
+    }
+}
+
+impl std::ops::AddAssign for Object {
+    fn add_assign(&mut self, rhs: Self) {
+        self.code += rhs.code;
+        self.data += rhs.data;
+    }
+}
+
 macro_rules! impl_from_data_for_relocatable {
     ($ty:ty) => {
         impl From<$ty> for Relocatable {
@@ -39,6 +66,11 @@ macro_rules! impl_from_data_for_relocatable {
                     abs_symbols: vec![],
                     relocations: vec![],
                 }
+            }
+        }
+        impl From<$ty> for Object {
+            fn from(code: $ty) -> Self {
+                Self::from(Relocatable::from(code))
             }
         }
     }
@@ -57,6 +89,11 @@ impl<const N: usize> From<[u8; N]> for Relocatable {
             abs_symbols: vec![],
             relocations: vec![],
         }
+    }
+}
+impl<const N: usize> From<[u8; N]> for Object {
+    fn from(code: [u8; N]) -> Self {
+        Self::from(Relocatable::from(code))
     }
 }
 
