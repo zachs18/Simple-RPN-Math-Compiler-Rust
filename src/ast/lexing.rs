@@ -4,10 +4,10 @@ use nom::{
     Parser,
     bytes::complete::{tag},
     character::complete::{alpha1, alphanumeric1, multispace0, one_of},
-    multi::{many0, separated_list0, many1},
+    multi::{many0, many1},
     branch::alt,
-    combinator::{recognize, map_res, opt, eof},
-    sequence::{pair, tuple, delimited, terminated, preceded}, number,
+    combinator::{recognize, opt, eof},
+    sequence::{pair, delimited, terminated},
 };
 
 macro_rules! make_keywords {

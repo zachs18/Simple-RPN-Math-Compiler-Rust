@@ -112,11 +112,11 @@ pub struct Operator {
 }
 
 #[cfg(feature = "parsing")]
-mod parsing;
+pub(crate) mod parsing;
 #[cfg(feature = "parsing")]
 pub use parsing::parse;
 
 #[cfg(feature = "parsing")]
-mod lexing;
+pub(crate) mod lexing;
 #[cfg(feature = "parsing")]
 pub use lexing::lex;

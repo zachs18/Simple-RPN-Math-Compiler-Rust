@@ -3,10 +3,10 @@ use std::borrow::Cow;
 use nom::{
     IResult,
     Parser,
-    multi::{many0, separated_list0, separated_list1},
+    multi::{many0, separated_list0},
     branch::alt,
-    combinator::{recognize, map_res, opt},
-    sequence::{pair, tuple, delimited, terminated, preceded}, Err, error::ParseError,
+    combinator::{opt},
+    sequence::{pair, tuple, delimited, terminated}, Err, error::ParseError,
 };
 
 use super::{*, lexing::{Token, Keyword}};
@@ -32,7 +32,7 @@ impl<I> ParseError<I> for Error<I> {
 
 type TokResult<'a, 'b, T> = IResult<&'a [Token<'b>], T, Error<&'a [Token<'b>]>>;
 
-fn ident<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, &'b str> {
+pub(crate) fn ident<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, &'b str> {
     match input.split_first() {
         Some((Token::Identifier(id), rest)) => Ok((rest, id)),
         None => Err(Err::Error(ParseError::from_error_kind(
@@ -43,7 +43,7 @@ fn ident<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, &'b str> {
     }
 }
 
-fn keyword(kw: Keyword) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a, 'b, Keyword> {
+pub(crate) fn keyword(kw: Keyword) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a, 'b, Keyword> {
     move |input| {
         match input.split_first() {
             Some((Token::Keyword(k, _), rest)) if *k == kw => Ok((rest, kw)),
@@ -56,7 +56,7 @@ fn keyword(kw: Keyword) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a, 
     }
 }
 
-fn punct(pu: &'static str) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a, 'b, &'static str> {
+pub(crate) fn punct(pu: &'static str) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a, 'b, &'static str> {
     move |input| {
         match input.split_first() {
             Some((Token::Punct(p), rest)) if *p == pu => Ok((rest, pu)),
@@ -69,7 +69,7 @@ fn punct(pu: &'static str) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'
     }
 }
 
-fn operator(op: Operator) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a, 'b, Operator> {
+pub(crate) fn operator(op: Operator) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a, 'b, Operator> {
     move |input| {
         match input.split_first() {
             Some((Token::Operator(o, c), rest))
@@ -83,7 +83,7 @@ fn operator(op: Operator) -> impl for<'a, 'b> Fn(&'a[Token<'b>]) -> TokResult<'a
     }
 }
 
-fn int_literal<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, &'b str> {
+pub(crate) fn int_literal<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, &'b str> {
     match input.split_first() {
         Some((Token::IntLiteral(lit), rest)) => Ok((rest, lit)),
         None => Err(Err::Error(ParseError::from_error_kind(
@@ -133,7 +133,7 @@ pub fn parse<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Module> {
     .parse(input)
 }
 
-fn function<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Function> {
+pub(crate) fn function<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Function> {
     tuple((
         keyword(Keyword::Fn),
         ident,
@@ -146,26 +146,26 @@ fn function<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Function> {
     }).parse(input)
 }
 
-fn param_list<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Vec<Variable>> {
+pub(crate) fn param_list<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Vec<Variable>> {
     separated_list0(
         punct(","),
         variable,
     )(input)
 }
 
-fn variable<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Variable> {
+pub(crate) fn variable<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Variable> {
     opt(keyword(Keyword::Mut)).and(ident).map(|(is_mut, id)| {
         Variable{ name: id.to_owned(), mutable: is_mut.is_some() }
     }).parse(input)
 }
 
-fn block<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Block> {
+pub(crate) fn block<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Block> {
     delimited(punct("{"), many0(statement), punct("}"))
         .map(|statements| Block{ statements })
         .parse(input)
 }
 
-fn statement<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Statement> {
+pub(crate) fn statement<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Statement> {
     alt((
         let_stmt.map(Statement::LetStatement),
         loop_stmt.map(Statement::LoopStatement),
@@ -174,7 +174,7 @@ fn statement<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Statement> {
     ))(input)
 }
 
-fn let_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Let> {
+pub(crate) fn let_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Let> {
     tuple((
         keyword(Keyword::Let),
         variable,
@@ -186,7 +186,7 @@ fn let_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Let> {
     }).parse(input)
 }
 
-fn loop_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Loop> {
+pub(crate) fn loop_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Loop> {
     tuple((
         keyword(Keyword::While),
         expr,
@@ -196,11 +196,11 @@ fn loop_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Loop> {
     }).parse(input)
 }
 
-fn return_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
+pub(crate) fn return_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
     delimited(keyword(Keyword::Return), expr, punct(";"))(input)
 }
 
-fn expr_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
+pub(crate) fn expr_stmt<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
     terminated(expr, punct(";"))(input)
 }
 
@@ -227,8 +227,8 @@ macro_rules! make_simple_subexpr_fn {
                         let new_op = rhs_op;
                         Expression::$variant { lhs: new_lhs, op: new_op, rhs: new_rhs }
                     }
-                    (Some((op, Expression::$variant { .. })), NonAssociative) => {
-                        todo!("handle parsing error here")
+                    (Some((lhs_op, Expression::$variant { op: rhs_op, .. })), NonAssociative) => {
+                        todo!("handle parsing error here: {:?} and {:?} do not associate. Use parentheses.", lhs_op, rhs_op)
                     }
                     (Some((op, rhs)), _) => {
                         // Handles different precedence operators, as well as LeftToRight associative same-precedence operators
@@ -240,7 +240,7 @@ macro_rules! make_simple_subexpr_fn {
     };
 }
 
-fn expr<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
+pub(crate) fn expr<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
     fn atom_expr<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
         alt((
             delimited(punct("("), expr, punct(")")).map(|expr| Expression::ParenExpression { expr: expr.into() }),
@@ -264,7 +264,7 @@ fn expr<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
     fn call_expr_tail<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Vec<Vec<Expression>>> {
         many0(delimited(punct("("), arg_list, punct(")")))(input)
     }
-    use Associativity::*;
+    
     make_simple_subexpr_fn!(mul_expr: call_expr mul_op LeftToRight => MulExpression);
     make_simple_subexpr_fn!(add_expr: mul_expr add_op  LeftToRight => AddExpression);
     make_simple_subexpr_fn!(compare_expr: add_expr compare_op NonAssociative => CompareExpression);
@@ -274,7 +274,7 @@ fn expr<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Expression> {
     assign_expr(input)
 }
 
-fn static_<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Static> {
+pub(crate) fn static_<'a, 'b>(input: &'a[Token<'b>]) -> TokResult<'a, 'b, Static> {
     tuple((
         keyword(Keyword::Static),
         opt(keyword(Keyword::Atomic)),
