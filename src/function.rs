@@ -237,6 +237,7 @@ impl Function {
         code += Relocatable::from(function_footer_code());
         code += Relocatable {
             data: function_abort_code().into(),
+            alignment: 0,
             symbols: vec![(Symbol::abort(), 0)],
             abs_symbols: vec![],
             relocations: vec![],

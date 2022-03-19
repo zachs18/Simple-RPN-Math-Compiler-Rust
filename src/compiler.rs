@@ -33,11 +33,14 @@ pub(crate) trait Machine : Debug + Copy {
     type Register: Copy + Debug + Eq + Ord;
     type Clobber: IntoIterator<Item = Self::Register> + Extend<Self::Register>;
 
+    fn natural_alignment(self) -> u32;
+
     #[must_use]
     fn function_prologue_epilogue_abort(self, stack_slots: usize, arg_slots: Vec<usize>) -> Result<(Object, Object, Object), CompileError<'static>>;
 
     #[must_use]
-    fn add_data(self, data: Vec<u8>, symbol: Symbol) -> Object;
+    /// alignment is the power of two of the minimum alignment, e.g. 0 is 1, 3 is 8.
+    fn add_data(self, data: Vec<u8>, alignment: u32, symbol: Symbol) -> Object;
 
     fn usable_registers(self) -> Vec<Self::Register>;
     #[must_use]
@@ -129,7 +132,7 @@ impl GlobalState {
             location: Location::Static { symbol: symbol.clone(), atomic: false },
         });
         self.symbols.insert(symbol.clone(), Rc::clone(&var));
-        (machine.add_data(value.to_le_bytes().into(), symbol), var)
+        (machine.add_data(value.to_le_bytes().into(), machine.natural_alignment(), symbol), var)
     }
 }
 
@@ -417,6 +420,26 @@ mod tests {
     use super::Compilable;
     use crate::compiler::FunctionScopeState;
     use super::GlobalState;
+
+    fn assert_eq_helper(actual: &[u8], expected: &[u8], print_limit: usize) {
+        if actual.len() != expected.len() {
+            eprintln!("Different lengths: actual: {}, expected: {}", actual.len(), expected.len());
+        }
+
+        let mut incorrect_count = 0;
+        for (i, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
+            if actual != expected {
+                incorrect_count += 1;
+                eprintln!("Byte #{i} incorrect: actual: {actual} ({actual:x}), expected: {expected} ({expected:x})");
+                if incorrect_count > print_limit {
+                    eprintln!("More than {print_limit} incorrect bytes found, not printing any more.");
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+        assert_eq!(actual, expected);
+    }
+
     #[test]
     fn assignment_vars_1() {
 
@@ -457,16 +480,17 @@ mod tests {
         let obj = ast.compile(super::arch::Machine, &mut scope_state).unwrap();
         let assembled = (obj.code + obj.data).assemble().unwrap();
         #[cfg(target_arch = "x86_64")]
-        assert_eq!(assembled, [
-            0x48, 0x8b, 0x05, 0x27, 0x00, 0x00, 0x00,       // mov .LCone(%rip),%rax
-            0x48, 0x89, 0x84, 0x24, 0x00, 0x00, 0x00, 0x00, // mov %rax,x(%rsp)
-            0x48, 0x8b, 0x05, 0x20, 0x00, 0x00, 0x00,       // mov .LCtwo(%rip),%rax
-            0x48, 0x89, 0x84, 0x24, 0x08, 0x00, 0x00, 0x00, // mov %rax,y(%rsp)
-            0x48, 0x8b, 0x84, 0x24, 0x08, 0x00, 0x00, 0x00, // mov y(%rsp),%rax
-            0x48, 0x89, 0x84, 0x24, 0x00, 0x00, 0x00, 0x00, // mov %rax,x(%rsp)
+        let target = [
+            0x48, 0x8b, 0x05, 0x19, 0x00, 0x00, 0x00,       // mov .LCone(%rip),%rax
+            0x48, 0x89, 0x04, 0x24,                         // mov %rax,x(%rsp)
+            0x48, 0x8b, 0x05, 0x16, 0x00, 0x00, 0x00,       // mov .LCtwo(%rip),%rax
+            0x48, 0x89, 0x44, 0x24, 0x08,                   // mov %rax,y(%rsp)
+            0x48, 0x8b, 0x44, 0x24, 0x08,                   // mov y(%rsp),%rax
+            0x48, 0x89, 0x04, 0x24,                         // mov %rax,x(%rsp)
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // .quad 1
             0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // .quad 2
-        ]);
+        ];
+        assert_eq_helper(&assembled, &target, 4);
     }
     #[test]
     fn assignment_vars_4() {
@@ -483,19 +507,21 @@ mod tests {
         let obj = ast.compile(super::arch::Machine, &mut scope_state).unwrap();
         let assembled = (obj.code + obj.data).assemble().unwrap();
         #[cfg(target_arch = "x86_64")]
-        assert_eq!(assembled, [
-            0x48, 0x8b, 0x05, 0x42, 0x00, 0x00, 0x00,       // mov .LCone(%rip),%rax
-            0x48, 0x89, 0x84, 0x24, 0x00, 0x00, 0x00, 0x00, // mov %rax,x(%rsp)
-            0x48, 0x8b, 0x05, 0x3b, 0x00, 0x00, 0x00,       // mov .LCtwo(%rip),%rax
-            0x48, 0x89, 0x84, 0x24, 0x08, 0x00, 0x00, 0x00, // mov %rax,y(%rsp)
-            0x48, 0x8b, 0x84, 0x24, 0x00, 0x00, 0x00, 0x00, // mov x(%rsp),%rax
-            0x48, 0x8b, 0x8c, 0x24, 0x08, 0x00, 0x00, 0x00, // mov y(%rsp),%rcx
+        let target = [
+            0x48, 0x8b, 0x05, 0x31, 0x00, 0x00, 0x00,       // mov .LCone(%rip),%rax
+            0x48, 0x89, 0x04, 0x24,                         // mov %rax,x(%rsp)
+            0x48, 0x8b, 0x05, 0x2e, 0x00, 0x00, 0x00,       // mov .LCtwo(%rip),%rax
+            0x48, 0x89, 0x44, 0x24, 0x08,                   // mov %rax,y(%rsp)
+            0x48, 0x8b, 0x04, 0x24,                         // mov x(%rsp),%rax
+            0x48, 0x8b, 0x4c, 0x24, 0x08,                   // mov y(%rsp),%rcx
             0x48, 0x01, 0xc8,                               // add %rcx,%rax
-            0x48, 0x89, 0x84, 0x24, 0x10, 0x00, 0x00, 0x00, // mov %rax,.Ltemp1
-            0x48, 0x8b, 0x84, 0x24, 0x10, 0x00, 0x00, 0x00, // mov .Ltemp1,%rax
-            0x48, 0x89, 0x84, 0x24, 0x00, 0x00, 0x00, 0x00, // mov %rax,x(%rsp)
+            0x48, 0x89, 0x44, 0x24, 0x10,                   // mov %rax,.Ltemp1
+            0x48, 0x8b, 0x44, 0x24, 0x10,                   // mov .Ltemp1,%rax
+            0x48, 0x89, 0x04, 0x24,                         // mov %rax,x(%rsp)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,       // // padding
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // .quad 1
             0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // .quad 2
-        ]);
+        ];
+        assert_eq_helper(&assembled, &target, 4);
     }
 }

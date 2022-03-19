@@ -20,7 +20,10 @@ impl Relocation {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Relocatable {
+    /// Raw data
     pub(crate) data: Cow<'static, [u8]>,
+    /// Power of two minimum alignment of this data (0 means 1, 1 means 2, 2 means 4, etc.)
+    pub(crate) alignment: u32,
     /// Vector of symbol definitions in this section of data
     pub(crate) symbols: Vec<(Symbol, usize)>,
     /// Vector of absolute symbol definitions
@@ -62,6 +65,7 @@ macro_rules! impl_from_data_for_relocatable {
             fn from(data: $ty) -> Self {
                 Self {
                     data: data.into(),
+                    alignment: 0,
                     symbols: vec![],
                     abs_symbols: vec![],
                     relocations: vec![],
@@ -85,6 +89,7 @@ impl<const N: usize> From<[u8; N]> for Relocatable {
     fn from(data: [u8; N]) -> Self {
         Self {
             data: Vec::from(Box::new(data) as Box<[u8]>).into(),
+            alignment: 0,
             symbols: vec![],
             abs_symbols: vec![],
             relocations: vec![],
@@ -107,8 +112,23 @@ impl std::ops::Add for Relocatable {
 
 impl std::ops::AddAssign for Relocatable {
     fn add_assign(&mut self, rhs: Self) {
+        {
+            // Pad self so rhs is still correctly aligned
+            let rhs_align = 1usize << rhs.alignment;
+            let padding = (rhs_align - (self.data.len() % rhs_align)) % rhs_align;
+            if padding > 0 {
+                self.data.to_mut().reserve(padding + rhs.data.len());
+                let new_lhs_len = self.data.len() + padding;
+                self.data.to_mut().resize(new_lhs_len, 0);
+            }
+        }
+
         let lhs_len = self.data.len();
-        self.data.to_mut().extend_from_slice(&rhs.data);
+        if rhs.data.len() > 0 {
+            self.data.to_mut().extend_from_slice(&rhs.data);
+        }
+
+        self.alignment = self.alignment.max(rhs.alignment);
 
         self.abs_symbols.extend(rhs.abs_symbols.into_iter().map(
             |(sym, val)| (sym, val)

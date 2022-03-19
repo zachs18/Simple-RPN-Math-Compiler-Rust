@@ -87,6 +87,7 @@ fn new_while_loop_header_footer() -> (Relocatable, Relocatable) {
 
     let header_code = Relocatable {
         data: header_code.into(),
+        alignment: 0,
         symbols: vec![(header_branch_symbol.clone(), header_code.len())],
         abs_symbols: vec![],
         relocations: vec![Relocation::new(header_offset_loc.start, RelocationKind::Pc32, footer_branch_symbol.clone(), -4)],
@@ -97,6 +98,7 @@ fn new_while_loop_header_footer() -> (Relocatable, Relocatable) {
 
     let footer_code = Relocatable {
         data: footer_code.into(),
+        alignment: 0,
         symbols: vec![(footer_branch_symbol.clone(), footer_code.len())],
         abs_symbols: vec![],
         relocations: vec![Relocation::new(footer_offset_loc.start, RelocationKind::Pc32, header_branch_symbol.clone(), -4)],

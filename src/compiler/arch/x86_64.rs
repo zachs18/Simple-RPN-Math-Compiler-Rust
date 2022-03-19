@@ -185,6 +185,7 @@ impl ConditionalJump {
         let bytes = vec![0x70 | self as u8, 0x00];
         Relocatable{
             data: bytes.into(),
+            alignment: 0,
             symbols: vec![],
             abs_symbols: vec![],
             relocations: vec![
@@ -196,6 +197,7 @@ impl ConditionalJump {
         let bytes = vec![0x0f, 0x80 | self as u8, 0x00, 0x00, 0x00, 0x00];
         Relocatable{
             data: bytes.into(),
+            alignment: 0,
             symbols: vec![],
             abs_symbols: vec![],
             relocations: vec![
@@ -205,95 +207,158 @@ impl ConditionalJump {
     }
 }
 
+/// Returns the ModRM + SIB + disp, and REX.B
+/// The reg field of ModRM is left as 0
+fn modrm_and_maybe_sib(rm: Operand) -> Result<(Relocatable, bool), ()> {
+    match rm {
+        Operand::Register(rm) => {
+            if rm as u8 >= 16 { todo!() }
+            let mut bytes = vec![0o300];
+            let modrm = &mut bytes[0];
+            *modrm |= (rm as u8 & 0x7) << 0;
+            let rex_b = ((rm as u8 >> 3) & 0x1) != 0;
+            Ok((bytes.into(), rex_b))
+        },
+        Operand::RegisterDisplacement(RegisterDisplacement { register: rm, disp }) => {
+            // https://wiki.osdev.org/X86-64_Instruction_Encoding#32.2F64-bit_addressing
+            if rm as u8 >= 16 { todo!() }
+            match (rm, disp) {
+                (Register::Rsp | Register::R12, _) => {
+                    // rsp/r12 must use SIB
+                    let mut bytes = if disp == 0 {
+                        vec![0o004, 0o040]
+                    } else if let Ok(disp) = i8::try_from(disp) {
+                        let mut bytes = vec![0o104, 0o040, 0x00];
+                        bytes[2..].copy_from_slice(&disp.to_le_bytes());
+                        bytes
+                    } else {
+                        let mut bytes = vec![0o204, 0o040, 0x00, 0x00, 0x00, 0x00];
+                        bytes[2..].copy_from_slice(&disp.to_le_bytes());
+                        bytes
+                    };
+
+                    let [modrm, sib] = <&mut [u8; 2]>::try_from(&mut bytes[..2]).unwrap();
+                    *sib |= (rm as u8 & 0x7) << 0; // index
+                    let rex_b = ((rm as u8 >> 3) & 0x1) != 0;
+
+                    Ok((bytes.into(), rex_b))
+                },
+                (_, 0) if !matches!(rm, Register::Rbp | Register::R13) => {
+                    // Rbp/R13 must use disp8 for 0 because of rip-relative
+                    let mut bytes = vec![0o000];
+                    let modrm = &mut bytes[0];
+                    *modrm |= (rm as u8 & 0x7) << 0;
+                    let rex_b = ((rm as u8 >> 3) & 0x1) != 0;
+                    Ok((bytes.into(), rex_b))
+                },
+                (_, disp) => {
+                    let mut bytes = if let Ok(disp) = i8::try_from(disp) {
+                        let mut bytes = vec![0o100, 0x00];
+                        bytes[1..].copy_from_slice(&disp.to_le_bytes());
+                        bytes
+                    } else {
+                        let mut bytes = vec![0o200, 0x00, 0x00, 0x00, 0x00];
+                        bytes[1..].copy_from_slice(&disp.to_le_bytes());
+                        bytes
+                    };
+                    let modrm = &mut bytes[0];
+                    *modrm |= (rm as u8 & 0x7) << 0;
+                    let rex_b = ((rm as u8 >> 3) & 0x1) != 0;
+                    Ok((bytes.into(), rex_b))
+                },
+            }
+        },
+        Operand::Symbol(sym) => {
+            let mut bytes = vec![
+                0o000, 0x00, 0x00, 0x00, 0x00,
+            ];
+    
+            let rex_b = false; // rip-relative uses b.r/m = 0.101 or 1.101, so just let b = 0
+    
+            let modrm_rm  = 0b101 << 0; // rip-relative uses b.r/m = 0.101
+            bytes[0] |= modrm_rm;
+
+            let code = Relocatable{
+                data: bytes.into(),
+                alignment: 0,
+                symbols: vec![],
+                abs_symbols: vec![],
+                relocations: vec![
+                    Relocation::new(1, RelocationKind::Pc32, sym, -4)
+                ],
+            };
+
+            Ok((code, rex_b))
+        },
+    }
+}
+
 impl Machine {
     fn simple(self, src: Operand, dst: Operand, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
         use Operand::*;
         match (src, dst) {
-            (Register(src), Register(dst)) => self.simple_reg_to_reg(src, dst, instruction),
-            (Register(src), Symbol(dst)) => self.simple_reg_to_symbol(src, dst, instruction),
-            (Symbol(src), Register(dst)) => self.simple_symbol_to_reg(src, dst, instruction),
-            (Register(src), RegisterDisplacement(dst)) => self.simple_reg_to_memory(src, dst, instruction),
-            (RegisterDisplacement(src), Register(dst)) => self.simple_memory_to_reg(src, dst, instruction),
+            (Register(src), dst) => self.simple_reg_to_rm(src, dst, instruction),
+            (src, Register(dst)) => self.simple_rm_to_reg(src, dst, instruction),
             _ => todo!(),
         }
     }
 
-    fn simple_reg_to_reg(self, src: Register, dst: Register, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
-        let src = src as u8;
-        let dst = dst as u8;
-        if src >= 16 || dst >= 16 { return Err(()); }
-        let opcode = instruction.dst_rm_opcode().ok_or(())?;
-        let mut bytes = [
-            0x48, opcode, 0xc0,
-        ];
-
-        let rex_b = ((dst >> 3) & 0x1) << 0;
-        let rex_r = ((src >> 3) & 0x1) << 2;
-        bytes[0] |= rex_b | rex_r;
-
-        let modrm_rm  = (dst & 0x7) << 0;
-        let modrm_reg = (src & 0x7) << 3;
-        bytes[2] |= modrm_rm | modrm_reg;
-        Ok(bytes.into())
-    }
-
-    fn simple_reg_to_symbol(self, src: Register, dst: Symbol, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
+    fn simple_reg_to_rm(self, src: Register, dst: Operand, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
         let src = src as u8;
         if src >= 16 { return Err(()); }
-        let opcode = instruction.dst_rm_opcode().ok_or(())?;
-        let mut bytes = vec![
-            0x48, opcode, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
 
-        let rex_b = 0; // rip-relative uses b.r/m = 0.101
+        let (mut code, rex_b) = modrm_and_maybe_sib(dst)?;
+        let opcode = vec![0x48, instruction.dst_rm_opcode().ok_or(())?];
+        let mut code = Relocatable::from(opcode) + code;
+
+        let bytes = code.data.to_mut();
+
+        let rex_b = (rex_b as u8) << 0;
         let rex_r = ((src >> 3) & 0x1) << 2;
         bytes[0] |= rex_b | rex_r;
 
-        let modrm_rm  = 0b101 << 0; // rip-relative uses b.r/m = 0.101
         let modrm_reg = (src & 0x7) << 3;
-        bytes[2] |= modrm_rm | modrm_reg;
-        Ok(Relocatable {
-            data: bytes.into(),
-            symbols: vec![],
-            abs_symbols: vec![],
-            relocations: vec![
-                Relocation::new(3, RelocationKind::Pc32, dst, -4)
-            ],
-        })
+        bytes[2] |= modrm_reg;
+        Ok(code)
     }
 
-    fn simple_symbol_to_reg(self, src: Symbol, dst: Register, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
+    fn simple_rm_to_reg(self, src: Operand, dst: Register, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
         let dst = dst as u8;
         if dst >= 16 { return Err(()); }
-        let opcode = instruction.src_rm_opcode().ok_or(())?;
-        let mut bytes = vec![
-            0x48, opcode, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
 
-        let rex_b = 0; // rip-relative uses b.r/m = 0.101
+        let (mut code, rex_b) = modrm_and_maybe_sib(src)?;
+        let opcode = vec![0x48, instruction.src_rm_opcode().ok_or(())?];
+        let mut code = Relocatable::from(opcode) + code;
+
+        let bytes = code.data.to_mut();
+
+        let rex_b = (rex_b as u8) << 0;
         let rex_r = ((dst >> 3) & 0x1) << 2;
         bytes[0] |= rex_b | rex_r;
 
-        let modrm_rm  = 0b101 << 0; // rip-relative uses b.r/m = 0.101
         let modrm_reg = (dst & 0x7) << 3;
-        bytes[2] |= modrm_rm | modrm_reg;
+        bytes[2] |= modrm_reg;
+        Ok(code)
+    }
 
-        Ok(Relocatable {
-            data: bytes.into(),
-            symbols: vec![],
-            abs_symbols: vec![],
-            relocations: vec![
-                Relocation::new(3, RelocationKind::Pc32, src, -4)
-            ],
-        })
+    fn simple_reg_to_reg(self, src: Register, dst: Register, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
+        self.simple_reg_to_rm(src, dst.into(), instruction)
+    }
+
+    fn simple_reg_to_symbol(self, src: Register, dst: Symbol, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
+        self.simple_reg_to_rm(src, dst.into(), instruction)
+    }
+
+    fn simple_symbol_to_reg(self, src: Symbol, dst: Register, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
+        self.simple_rm_to_reg(src.into(), dst, instruction)
     }
 
     fn simple_reg_to_memory(self, src: Register, dst: RegisterDisplacement, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
-        todo!() // https://wiki.osdev.org/X86-64_Instruction_Encoding#32.2F64-bit_addressing
+        self.simple_reg_to_rm(src, dst.into(), instruction)
     }
 
     fn simple_memory_to_reg(self, src: RegisterDisplacement, dst: Register, instruction: SimpleInstruction) -> Result<Relocatable, ()> {
-        todo!() // https://wiki.osdev.org/X86-64_Instruction_Encoding#32.2F64-bit_addressing
+        self.simple_rm_to_reg(src.into(), dst, instruction)
     }
 }
 
@@ -310,6 +375,8 @@ const ARG_REGISTERS: [Register; 6] = [
 impl super::super::Machine for Machine {
     type Register = Register;
     type Clobber = Vec<Register>;
+
+    fn natural_alignment(self) -> u32 { 3 }
 
     fn function_prologue_epilogue_abort(self, stack_slots: usize, arg_slots: Vec<usize>) -> Result<(Object, Object, Object), CompileError<'static>> {
         for arg in &arg_slots {
@@ -368,9 +435,11 @@ impl super::super::Machine for Machine {
         todo!()
     }
 
-    fn add_data(self, data: Vec<u8>, symbol: Symbol) -> Object {
+    /// alignment is the power of two of the minimum alignment, e.g. 0 is 1, 3 is 8.
+    fn add_data(self, data: Vec<u8>, alignment: u32, symbol: Symbol) -> Object {
         let data = Relocatable{
             data: data.into(),
+            alignment,
             symbols: vec![(symbol, 0)],
             abs_symbols: vec![],
             relocations: vec![],
